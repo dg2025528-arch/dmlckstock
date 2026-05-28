@@ -8,14 +8,16 @@ from datetime import date, timedelta
 
 st.set_page_config(page_title="한/미 경제 및 뉴스 대시보드", layout="wide", initial_sidebar_state="expanded")
 
+# CSS를 활용한 디자인 커스텀
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
     h1, h2, h3 { color: #1f2937; font-weight: 700; }
     [data-testid="stMetric"] {
         background-color: #f8fafc; border: 1px solid #e2e8f0;
-        padding: 20px; border-radius: 12px;
+        padding: 15px; border-radius: 12px;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -23,11 +25,11 @@ st.markdown("""
 st.title("📊 글로벌 마켓 & 경제 대시보드")
 st.markdown("당곡고 학생들을 위한 프리미엄 경제 분석 툴입니다.")
 
+# --- 사이드바 및 설정 ---
 st.sidebar.header("⚙️ 데이터 설정")
 start_date = st.sidebar.date_input("최초 시작일", date(2010, 1, 1))
 end_date = st.sidebar.date_input("최초 종료일", date.today())
 
-# 종목 리스트 대폭 확장 (한국, 미국, 암호화폐)
 stocks_dict = {
     "원/달러 환율": "KRW=X",
     "비트코인 (BTC)": "BTC-USD",
@@ -61,13 +63,12 @@ stocks_dict = {
     "월마트 (유통)": "WMT"
 }
 
-# 💡 [핵심 UI 개선] 화면을 차지하던 선택창을 깔끔한 팝오버(버튼) 안으로 숨겼습니다!
 with st.sidebar.popover("👇 분석할 주식을 선택하세요 (클릭)"):
     selected_stocks = st.multiselect(
         "비교할 항목을 골라주세요",
         options=list(stocks_dict.keys()),
-        default=["원/달러 환율", "KOSPI 지수", "삼성전자 (반도체)", "S&P 500 지수", "애플 (IT/기기)"],
-        label_visibility="collapsed" # 위의 제목 숨기기
+        default=["원/달러 환율", "KOSPI 지수", "삼성전자 (반도체)", "애플 (IT/기기)"],
+        label_visibility="collapsed"
     )
 
 @st.cache_data
@@ -103,29 +104,61 @@ if selected_stocks:
     df_filtered = df_close.loc[mask].copy()
 
     if not df_filtered.empty:
-        fx_col = "원/달러 환율"
-        if fx_col in df_filtered.columns:
-            start_fx = df_filtered[fx_col].iloc[0]
-            current_fx = df_filtered[fx_col].iloc[-1]
-            fx_diff = current_fx - start_fx
+        
+        # 💡 [핵심 추가 기능] 선택한 모든 종목의 현재 가격과 변동을 보여주는 카드 섹션
+        st.subheader("💰 선택 기간 내 종목별 가치 변화")
+        st.caption(f"조이스틱으로 설정한 시작일({selected_range[0]}) 대비 종료일({selected_range[1]})의 가격 변화입니다.")
+        
+        # 4개의 열(Column)을 만들어 데이터를 분배할 준비
+        metric_cols = st.columns(4)
+        
+        # 선택한 종목들을 순회하며 가격 계산 및 화면 출력
+        for idx, col_name in enumerate(df_filtered.columns):
+            ticker_symbol = stocks_dict[col_name]
             
-            # 단위(원) 명시
-            st.metric(
-                label=f"💵 원/달러 환율 (기준일: {selected_range[1]})", 
-                value=f"{current_fx:,.1f} 원 (KRW)", 
-                delta=f"{fx_diff:,.1f} 원 (선택 기간 첫날 대비)"
-            )
-            st.markdown("<br>", unsafe_allow_html=True)
+            # 티커 심볼을 보고 원화인지 달러인지 똑똑하게 구분
+            if ticker_symbol == "KRW=X":
+                curr_symbol = ""
+                unit = "원"
+                num_format = ",.1f"
+            elif ticker_symbol.endswith(".KS") or ticker_symbol.endswith(".KQ"):
+                curr_symbol = "₩"
+                unit = "원"
+                num_format = ",.0f"
+            else:
+                curr_symbol = "$"
+                unit = "달러"
+                num_format = ",.2f"
+            
+            # 슬라이더 기간 내의 첫날 가격과 마지막 날 가격 계산
+            start_price = df_filtered[col_name].bfill().iloc[0]
+            end_price = df_filtered[col_name].iloc[-1]
+            price_diff = end_price - start_price
+            percent_diff = (price_diff / start_price) * 100
+            
+            # 순서대로 4개의 열에 번갈아가며 박스(Metric) 배치
+            with metric_cols[idx % 4]:
+                st.metric(
+                    label=f"{col_name}", 
+                    value=f"{curr_symbol}{end_price:{num_format}}", 
+                    delta=f"{price_diff:{num_format}} {unit} ({percent_diff:.2f}%)"
+                )
 
+        st.markdown("<hr style='margin-top: 5px; margin-bottom: 25px;'>", unsafe_allow_html=True)
+
+        # --- 메인 차트 및 뉴스 섹션 ---
         col_chart, col_news = st.columns([7, 3])
 
         with col_chart:
+            # 환율 그래프 분리 출력
+            fx_col = "원/달러 환율"
             if fx_col in df_filtered.columns:
                 fig_fx = px.line(df_filtered, x=df_filtered.index, y=fx_col)
                 fig_fx.update_layout(title="원/달러 환율 추이", height=200, margin=dict(t=30, b=10, l=0, r=0), plot_bgcolor="white")
                 fig_fx.update_traces(line_color='#94a3b8')
                 st.plotly_chart(fig_fx, use_container_width=True)
 
+            # 주식 수익률 비교 메인 차트
             stock_cols = [col for col in df_filtered.columns if col != fx_col]
             if stock_cols:
                 df_stocks = df_filtered[stock_cols]
@@ -141,7 +174,6 @@ if selected_stocks:
         with col_news:
             st.subheader("📰 실시간 경제 뉴스")
             
-            # 💡 [핵심 버그 수정] 코드가 깨지지 않도록 스트림릿 고유 기능(st.image, st.markdown) 사용
             try:
                 rss_url = "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko"
                 feed = feedparser.parse(rss_url)
@@ -159,13 +191,12 @@ if selected_stocks:
                     except:
                         pass
                     
-                    # HTML 주입 대신 깔끔하게 컬럼으로 이미지와 텍스트 배치
                     n_col1, n_col2 = st.columns([1, 4])
                     with n_col1:
                         st.image(img_url, use_column_width=True)
                     with n_col2:
                         st.markdown(f"**[{title}]({link})**")
-                    st.write("---") # 구분선
+                    st.write("---")
                     
             except Exception as e:
                 st.error("현재 뉴스 서버와 연결이 원활하지 않습니다.")
